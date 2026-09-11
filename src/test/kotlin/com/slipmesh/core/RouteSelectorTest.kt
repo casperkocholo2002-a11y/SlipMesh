@@ -314,4 +314,56 @@ class RouteSelectorTest {
             decision.selected?.id
         )
     }
+
+    @Test
+    fun `healthy current route remains sticky`() {
+
+        val current =
+            route(
+                id = "current",
+                provider = "cloudflare",
+                account = "account-a",
+                hostname = "current.example"
+            )
+
+        val independentBackup =
+            route(
+                id = "independent-backup",
+                provider = "provider-b",
+                account = "account-b",
+                hostname = "backup.example"
+            )
+
+        val health =
+            mapOf(
+                "current" to
+                    RouteHealth(
+                        state = HealthState.HEALTHY,
+                        consecutiveFailures = 0
+                    ),
+
+                "independent-backup" to
+                    RouteHealth(
+                        state = HealthState.HEALTHY,
+                        consecutiveFailures = 0
+                    )
+            )
+
+        val decision =
+            RouteSelector.select(
+                routes =
+                    listOf(
+                        current,
+                        independentBackup
+                    ),
+                health = health,
+                currentRouteId = "current"
+            )
+
+        assertEquals(
+            "current",
+            decision.selected?.id
+        )
+    }
+
 }

@@ -41,6 +41,11 @@ object RouteSelector {
                 routes.firstOrNull { it.id == id }
             }
 
+        val currentHealth =
+            current?.let { route ->
+                health[route.id] ?: RouteHealth()
+            }
+
         val ranked =
             routes
                 .asSequence()
@@ -64,8 +69,9 @@ object RouteSelector {
                     val score =
                         route.basePriority +
                             healthScore(routeHealth) +
-                            diversityScore(
+                            transitionScore(
                                 current = current,
+                                currentHealth = currentHealth,
                                 candidate = route
                             ) -
                             failurePenalty(routeHealth)
@@ -132,15 +138,53 @@ object RouteSelector {
      * only hostname/account may still leave us inside the same provider
      * failure domain.
      */
-    private fun diversityScore(
+    /**
+     * Transition scoring serves two different purposes:
+     *
+     * 1. Keep a healthy current route sticky to avoid connection churn.
+     * 2. Once failover is actually required, reward failure-domain diversity.
+     *
+     * Diversity must never cause migration away from a stable route by itself.
+     */
+    private fun transitionScore(
         current: RouteCandidate?,
+        currentHealth: RouteHealth?,
         candidate: RouteCandidate
     ): Int {
 
         if (current == null)
             return 0
 
-        if (current.id == candidate.id)
+        if (current.id == candidate.id) {
+            return when {
+                currentHealth?.state == HealthState.HEALTHY &&
+                    (currentHealth.consecutiveFailures == 0) ->
+                    120
+
+                currentHealth?.state == HealthState.UNKNOWN &&
+                    (currentHealth.consecutiveFailures == 0) ->
+                    40
+
+                else ->
+                    0
+            }
+        }
+
+        val failoverNeeded =
+            when (currentHealth?.state ?: HealthState.UNKNOWN) {
+
+                HealthState.HEALTHY,
+                HealthState.UNKNOWN ->
+                    (currentHealth?.consecutiveFailures ?: 0) > 0
+
+                HealthState.DEGRADED,
+                HealthState.SUSPECTED_BLOCK,
+                HealthState.UNREACHABLE,
+                HealthState.COOLDOWN ->
+                    true
+            }
+
+        if (!failoverNeeded)
             return 0
 
         var score = 0
