@@ -96,6 +96,38 @@ object RouteSelector {
     }
 
 
+    /**
+     * Returns the highest-ranked route other than the current route.
+     *
+     * Ranking still evaluates the complete route set so failover
+     * diversity relative to the current route is preserved.
+     */
+    fun selectAlternative(
+        routes: List<RouteCandidate>,
+        health: Map<String, RouteHealth>,
+        currentRouteId: String?
+    ): RouteCandidate? {
+
+        val decision =
+            select(
+                routes = routes,
+                health = health,
+                currentRouteId = currentRouteId
+            )
+
+        if (currentRouteId == null) {
+            return decision.selected
+        }
+
+        return decision.ranked
+            .asSequence()
+            .map { it.route }
+            .firstOrNull {
+                it.id != currentRouteId
+            }
+    }
+
+
     private fun healthScore(
         health: RouteHealth
     ): Int =
