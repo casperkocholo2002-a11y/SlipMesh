@@ -64,6 +64,18 @@ class SlipMeshVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        val durableIntentCleared =
+            VpnRecoveryIntentRecorder(
+                SharedPreferencesVpnConnectionIntentStore.create(
+                    this
+                )
+            ).recordPermissionRevoked()
+
+        if (!durableIntentCleared) {
+            VpnRecoveryRuntime
+                .suppressRecoveryForProcess()
+        }
+
         closeTun()
 
         VpnLifecycleRuntime.dispatch(

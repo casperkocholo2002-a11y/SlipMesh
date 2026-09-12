@@ -11,7 +11,12 @@ import android.widget.TextView
 import com.slipmesh.android.vpn.SlipMeshVpnService
 import com.slipmesh.android.vpn.VpnLifecycleCommand
 import com.slipmesh.android.vpn.VpnLifecycleEvent
+import com.slipmesh.android.vpn.SharedPreferencesVpnConnectionIntentStore
 import com.slipmesh.android.vpn.VpnLifecycleRuntime
+import com.slipmesh.android.vpn.VpnRecoveryAction
+import com.slipmesh.android.vpn.VpnRecoveryIntentRecorder
+import com.slipmesh.android.vpn.VpnRecoveryLifecycleBridge
+import com.slipmesh.android.vpn.VpnRecoveryRuntime
 import com.slipmesh.android.vpn.VpnSessionState
 
 class MainActivity : Activity() {
@@ -19,6 +24,18 @@ class MainActivity : Activity() {
     private lateinit var statusView: TextView
 
     private var pendingPermissionIntent: Intent? = null
+
+    private val recoveryIntentStore by lazy {
+        SharedPreferencesVpnConnectionIntentStore.create(
+            this
+        )
+    }
+
+    private val recoveryIntentRecorder by lazy {
+        VpnRecoveryIntentRecorder(
+            recoveryIntentStore
+        )
+    }
 
     override fun onCreate(
         savedInstanceState: Bundle?,
@@ -67,6 +84,7 @@ class MainActivity : Activity() {
         )
 
         renderState()
+        recoverConnectionIntentOnce()
     }
 
     override fun onResume() {
@@ -74,7 +92,77 @@ class MainActivity : Activity() {
         renderState()
     }
 
+    private fun recoverConnectionIntentOnce() {
+        val permissionIntent =
+            VpnService.prepare(this)
+
+        pendingPermissionIntent =
+            permissionIntent
+
+        val recoveryAction =
+            VpnRecoveryRuntime.recover(
+                store =
+                    recoveryIntentStore,
+                permissionGranted =
+                    permissionIntent == null,
+            )
+
+        when (recoveryAction) {
+            VpnRecoveryAction.NONE -> {
+                pendingPermissionIntent = null
+            }
+
+            VpnRecoveryAction.REQUEST_PERMISSION,
+            VpnRecoveryAction.REQUEST_CONNECT -> {
+                val transition =
+                    VpnRecoveryLifecycleBridge.transitionFor(
+                        action =
+                            recoveryAction
+                    ) ?: return
+
+                val runtimeTransition =
+                    VpnLifecycleRuntime.dispatch(
+                        when (recoveryAction) {
+                            VpnRecoveryAction.REQUEST_PERMISSION ->
+                                VpnLifecycleEvent.ConnectRequested(
+                                    permissionAlreadyGranted =
+                                        false,
+                                )
+
+                            VpnRecoveryAction.REQUEST_CONNECT ->
+                                VpnLifecycleEvent.ConnectRequested(
+                                    permissionAlreadyGranted =
+                                        true,
+                                )
+
+                            VpnRecoveryAction.NONE ->
+                                return
+                        }
+                    )
+
+                check(
+                    transition ==
+                        runtimeTransition
+                )
+
+                executeCommands(
+                    runtimeTransition.commands
+                )
+            }
+        }
+
+        renderState()
+    }
+
     private fun requestConnect() {
+        if (
+            !recoveryIntentRecorder
+                .recordConnectRequested()
+        ) {
+            renderState()
+            return
+        }
+
         val permissionIntent =
             VpnService.prepare(this)
 
@@ -97,6 +185,15 @@ class MainActivity : Activity() {
     }
 
     private fun requestDisconnect() {
+        val durableIntentCleared =
+            recoveryIntentRecorder
+                .recordExplicitDisconnect()
+
+        if (!durableIntentCleared) {
+            VpnRecoveryRuntime
+                .suppressRecoveryForProcess()
+        }
+
         val transition =
             VpnLifecycleRuntime.dispatch(
                 VpnLifecycleEvent.DisconnectRequested
@@ -132,11 +229,24 @@ class MainActivity : Activity() {
 
         pendingPermissionIntent = null
 
+        val granted =
+            resultCode == RESULT_OK
+
+        if (!granted) {
+            val durableIntentCleared =
+                recoveryIntentRecorder
+                    .recordPermissionDenied()
+
+            if (!durableIntentCleared) {
+                VpnRecoveryRuntime
+                    .suppressRecoveryForProcess()
+            }
+        }
+
         val transition =
             VpnLifecycleRuntime.dispatch(
                 VpnLifecycleEvent.PermissionResult(
-                    granted =
-                        resultCode == RESULT_OK,
+                    granted = granted,
                 )
             )
 
