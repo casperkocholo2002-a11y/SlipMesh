@@ -10,16 +10,23 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
+import android.system.OsConstants
 import com.slipmesh.android.MainActivity
 import com.slipmesh.android.R
 
 /**
- * VPN lifecycle service only.
+ * VPN lifecycle and minimal TUN ownership boundary.
  *
- * P2-WP02 does not establish a TUN interface,
- * forward packets, or open any transport.
+ * P2-WP03 establishes an inert TUN interface only.
+ * It does not read/write packets, add capture routes,
+ * or open any transport.
  */
 class SlipMeshVpnService : VpnService() {
+
+    private val tunLock = Any()
+
+    private val tunSession =
+        TunSession()
 
     override fun onStartCommand(
         intent: Intent?,
@@ -30,16 +37,15 @@ class SlipMeshVpnService : VpnService() {
         return when (intent?.action) {
 
             ACTION_START -> {
-                if (tryPromoteToForeground()) {
+                if (
+                    tryPromoteToForeground() &&
+                    tryEstablishTun()
+                ) {
                     VpnLifecycleRuntime.dispatch(
                         VpnLifecycleEvent.ServiceStarted
                     )
                 } else {
-                    VpnLifecycleRuntime.dispatch(
-                        VpnLifecycleEvent.ServiceStopped
-                    )
-
-                    stopSelf()
+                    failStart()
                 }
 
                 Service.START_NOT_STICKY
@@ -57,6 +63,8 @@ class SlipMeshVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        closeTun()
+
         VpnLifecycleRuntime.dispatch(
             VpnLifecycleEvent.PermissionRevoked
         )
@@ -71,11 +79,93 @@ class SlipMeshVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        closeTun()
+
         VpnLifecycleRuntime.dispatch(
             VpnLifecycleEvent.ServiceStopped
         )
 
         super.onDestroy()
+    }
+
+    private fun tryEstablishTun(): Boolean =
+        synchronized(tunLock) {
+
+            if (tunSession.hasDescriptor()) {
+                return@synchronized true
+            }
+
+            try {
+                val descriptor =
+                    Builder()
+                        .setSession(
+                            getString(
+                                R.string.app_name
+                            )
+                        )
+                        .addAddress(
+                            TUN_IPV4_ADDRESS,
+                            TUN_IPV4_PREFIX_LENGTH,
+                        )
+                        .allowFamily(
+                            OsConstants.AF_INET
+                        )
+                        .allowFamily(
+                            OsConstants.AF_INET6
+                        )
+                        .establish()
+                        ?: return@synchronized false
+
+                val handle =
+                    ParcelFileDescriptorTunHandle(
+                        descriptor
+                    )
+
+                if (
+                    tunSession.attach(
+                        handle
+                    )
+                ) {
+                    true
+                } else {
+                    try {
+                        descriptor.close()
+                    } catch (_: Exception) {
+                        // Descriptor was not adopted.
+                    }
+
+                    false
+                }
+
+            } catch (_: IllegalArgumentException) {
+                false
+
+            } catch (_: IllegalStateException) {
+                false
+
+            } catch (_: SecurityException) {
+                false
+            }
+        }
+
+    private fun closeTun() {
+        synchronized(tunLock) {
+            tunSession.close()
+        }
+    }
+
+    private fun failStart() {
+        closeTun()
+
+        VpnLifecycleRuntime.dispatch(
+            VpnLifecycleEvent.ServiceStopped
+        )
+
+        stopForeground(
+            STOP_FOREGROUND_REMOVE
+        )
+
+        stopSelf()
     }
 
     private fun tryPromoteToForeground(): Boolean {
@@ -170,6 +260,8 @@ class SlipMeshVpnService : VpnService() {
     }
 
     private fun stopVpnService() {
+        closeTun()
+
         VpnLifecycleRuntime.dispatch(
             VpnLifecycleEvent.ServiceStopped
         )
@@ -195,6 +287,12 @@ class SlipMeshVpnService : VpnService() {
 
         private const val NOTIFICATION_ID =
             1001
+
+        private const val TUN_IPV4_ADDRESS =
+            "10.254.0.1"
+
+        private const val TUN_IPV4_PREFIX_LENGTH =
+            32
 
         fun startIntent(
             context: Context,
