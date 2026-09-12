@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
@@ -96,7 +97,7 @@ class SlipMeshVpnService : VpnService() {
             }
 
             try {
-                val descriptor =
+                val builder =
                     Builder()
                         .setSession(
                             getString(
@@ -113,6 +114,28 @@ class SlipMeshVpnService : VpnService() {
                         .allowFamily(
                             OsConstants.AF_INET6
                         )
+
+                val policyResult =
+                    AppRoutingPolicyApplier(
+                        PackageManagerInstalledPackageLookup(
+                            packageManager
+                        )
+                    ).apply(
+                        currentAppRoutingPolicy(),
+                        VpnBuilderAppRoutingTarget(
+                            builder
+                        ),
+                    )
+
+                if (
+                    policyResult !==
+                    AppRoutingApplyResult.Applied
+                ) {
+                    return@synchronized false
+                }
+
+                val descriptor =
+                    builder
                         .establish()
                         ?: return@synchronized false
 
@@ -137,6 +160,9 @@ class SlipMeshVpnService : VpnService() {
                     false
                 }
 
+            } catch (_: PackageManager.NameNotFoundException) {
+                false
+
             } catch (_: IllegalArgumentException) {
                 false
 
@@ -147,6 +173,10 @@ class SlipMeshVpnService : VpnService() {
                 false
             }
         }
+
+    private fun currentAppRoutingPolicy():
+        AppRoutingPolicy =
+        AppRoutingPolicy.AllApps
 
     private fun closeTun() {
         synchronized(tunLock) {
