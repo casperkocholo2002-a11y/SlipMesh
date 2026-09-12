@@ -1,4 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SlipMesh</string>
+
+    <string name="vpn_connect">Connect</string>
+    <string name="vpn_disconnect">Disconnect</string>
+    <string name="vpn_status">VPN state: %1$s</string>
+
+    <string name="vpn_notification_channel">
+        SlipMesh VPN
+    </string>
+
+    <string name="vpn_notification_title">
+        SlipMesh VPN
+    </string>
+
+    <string name="vpn_notification_text">
+        VPN service is active
+    </string>
 </resources>
