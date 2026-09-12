@@ -1,13 +1,48 @@
 package com.slipmesh.android.transport
 
+import com.slipmesh.core.ConnectionObservation
+
 /**
  * Android-to-transport lifecycle seam.
  *
- * Concrete VLESS/ECH/other transports are deliberately outside P2-WP01.
+ * Transport implementations report raw connectivity observations only.
+ * Failure classification, route selection and failover remain owned by
+ * the qualified Phase 1 core.
  */
 interface TransportEngineBoundary {
 
-    fun start()
+    fun start(
+        profile: LegacyTransportProfile,
+        observationSink: TransportObservationSink,
+    ): TransportStartResult
 
-    fun stop()
+    fun stop(): TransportStopResult
+}
+
+fun interface TransportObservationSink {
+
+    fun onObservation(
+        observation: ConnectionObservation,
+    )
+}
+
+sealed interface TransportStartResult {
+
+    data class Started(
+        val sessionId: String,
+    ) : TransportStartResult
+
+    data class Rejected(
+        val reason: TransportStartRejection,
+    ) : TransportStartResult
+}
+
+enum class TransportStartRejection {
+    INVALID_CONFIGURATION,
+    ALREADY_RUNNING,
+}
+
+enum class TransportStopResult {
+    STOPPED,
+    ALREADY_STOPPED,
 }
